@@ -2,6 +2,7 @@
 import os
 import time
 import threading
+import subprocess
 import pandas as pd
 from datetime import datetime
 from utils import calculate_technical_indicators
@@ -15,6 +16,34 @@ SYMBOLS = get_all_usdt_symbols()
 
 # Dictionary untuk menyimpan hasil prediksi global
 prediction_results = defaultdict(list)
+
+def ensemble_predict(symbol, latest_data):
+    try:
+        name = symbol.replace("/", "")
+        model_path = os.path.join(MODEL_PATH, f"{name}_model.pkl")
+        model_new_path = os.path.join(MODEL_PATH, f"{name}_model_new.pkl")
+        encoder_path = os.path.join(MODEL_PATH, f"{name}_label_encoder.pkl")
+
+        if not os.path.exists(model_path) or not os.path.exists(encoder_path):
+            return None
+
+        model = joblib.load(model_path)
+        label_encoder = joblib.load(encoder_path)
+
+        if os.path.exists(model_new_path):
+            model_new = joblib.load(model_new_path)
+            pred1 = model.predict_proba(latest_data)
+            pred2 = model_new.predict_proba(latest_data)
+            ensemble_pred = (pred1 + pred2) / 2
+            pred_class = ensemble_pred.argmax(axis=1)[0]
+        else:
+            pred_class = model.predict(latest_data)[0]
+
+        prediction = label_encoder.inverse_transform([int(pred_class)])[0]
+        return prediction
+    except Exception as e:
+        print(f"⚠️ Gagal ensemble predict untuk {symbol}: {e}")
+        return None
 
 def analyze_symbol(symbol):
     try:
@@ -37,18 +66,11 @@ def analyze_symbol(symbol):
             return
 
         latest_data = df.iloc[-1:][['rsi', 'macd', 'signal_line', 'support', 'resistance']]
-        model_file = os.path.join(MODEL_PATH, f"{symbol.replace('/', '')}_model.pkl")
-        encoder_file = os.path.join(MODEL_PATH, f"{symbol.replace('/', '')}_label_encoder.pkl")
+        prediction = ensemble_predict(symbol, latest_data)
 
-        if not os.path.exists(model_file) or not os.path.exists(encoder_file):
-            print(f"⚠️ Model atau encoder tidak ditemukan untuk {symbol}.")
+        if prediction is None:
+            print(f"⚠️ Prediksi gagal untuk {symbol}.")
             return
-
-        model = joblib.load(model_file)
-        label_encoder = joblib.load(encoder_file)
-
-        prediction_encoded = model.predict(latest_data)[0]
-        prediction = label_encoder.inverse_transform([int(prediction_encoded)])[0]
 
         close_price = df.iloc[-1]['close']
         rsi = latest_data['rsi'].values[0]
@@ -70,6 +92,16 @@ def print_grouped_predictions():
             print(f" - {item['symbol']} | Harga: {item['price']:.4f} | RSI: {item['rsi']:.2f}")
     print("\n==============================\n")
 
+def prepare_dataset_and_model():
+    if not os.path.exists("training_data/training_dataset.csv"):
+        print("📦 Dataset belum ditemukan. Menjalankan generate_training_dataset.py...")
+        subprocess.run(["python3", "generate_training_dataset.py"])
+    else:
+        print("✅ Dataset sudah tersedia.")
+
+    print("🧠 Melatih model...")
+    subprocess.run(["python3", "train_model.py"])
+
 def run_analysis():
     global prediction_results
     prediction_results.clear()
@@ -88,6 +120,8 @@ def run_analysis():
     print_grouped_predictions()
 
 if __name__ == "__main__":
+    prepare_dataset_and_model()
+
     while True:
         run_analysis()
         print("🕐 Menunggu 1 jam sebelum analisis berikutnya...")
