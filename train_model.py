@@ -37,6 +37,12 @@ def objective(trial, X, y, n_classes):
     y_pred = model.predict(X_valid)
     return f1_score(y_valid, y_pred, average='weighted')
 
+def ensemble_predict(X, model_old, model_new, weights=(0.7, 0.3)):
+    pred_old = model_old.predict_proba(X)
+    pred_new = model_new.predict_proba(X)
+    blended = weights[0] * pred_old + weights[1] * pred_new
+    return np.argmax(blended, axis=1)
+
 def train_model_for_symbol(symbol, df):
     try:
         df_symbol = df[df['symbol'] == symbol].dropna()
@@ -50,6 +56,10 @@ def train_model_for_symbol(symbol, df):
         X = df_symbol[features]
         y = df_symbol['label']
         n_classes = len(set(y))
+
+        name = symbol.replace("/", "")
+        model_path = os.path.join(MODEL_DIR, f"{name}_model.pkl")
+        model_new_path = os.path.join(MODEL_DIR, f"{name}_model_new.pkl")
 
         if len(df_symbol) > 500:
             study = optuna.create_study(direction='maximize')
@@ -71,10 +81,15 @@ def train_model_for_symbol(symbol, df):
 
         model.fit(X, y)
 
-        name = symbol.replace("/", "")
-        joblib.dump(model, os.path.join(MODEL_DIR, f"{name}_model.pkl"))
-        joblib.dump(label_encoder, os.path.join(MODEL_DIR, f"{name}_label_encoder.pkl"))
-        print(f"✅ Model untuk {symbol} berhasil disimpan.")
+        if os.path.exists(model_path) and len(df_symbol) < 100:
+            # Ensemble mode: simpan sebagai model baru tambahan
+            joblib.dump(model, model_new_path)
+            print(f"🔁 Model baru untuk {symbol} disimpan sebagai ensemble tambahan.")
+        else:
+            joblib.dump(model, model_path)
+            joblib.dump(label_encoder, os.path.join(MODEL_DIR, f"{name}_label_encoder.pkl"))
+            print(f"✅ Model utama untuk {symbol} berhasil disimpan.")
+
     except Exception as e:
         print(f"❌ Gagal melatih model untuk {symbol}: {e}")
 
